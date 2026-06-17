@@ -3,8 +3,8 @@
 
 #define WIFI_SSID       "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
-// Set this to the IP of the machine running the Express backend
-#define BACKEND_URL     "http://192.168.1.100:5000/api/readings"
+// Set this to your deployed Render backend URL (HTTPS)
+#define BACKEND_URL     "https://your-app-name.onrender.com/api/readings"
 #define DEVICE_ID       "node-01"
 
 #define PIR_PIN         D5   // GPIO14
@@ -17,6 +17,7 @@
 #define BUZZER_DURATION_MS  2000UL
 #define DISTANCE_THRESHOLD  150.0f   // cm — below this + PIR = intrusion
 #define BLINK_COUNT         5
+#define BLINK_INTERVAL_MS   80UL     // time between LED transitions during alert
 #define WIFI_RETRY_LIMIT    20
 
 #endif // CONFIG_H

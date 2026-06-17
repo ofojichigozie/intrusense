@@ -1,55 +1,50 @@
 /**
- * IntruSense Firmware — NodeMCU ESP8266
+ * IntruSense Firmware
+ * ESP8266 + PIR sensor + HC-SR04 ultrasonic module + buzzer + status LED
  *
- * Sensors:
- *   PIR    → D5 (GPIO14)  — passive infrared motion detection
- *   TRIG   → D6 (GPIO12)  — ultrasonic trigger
- *   ECHO   → D7 (GPIO13)  — ultrasonic echo
- *   BUZZER → D8 (GPIO15)  — local audible alert
- *   LED    → D2 (GPIO4)   — solid: online | rapid blink: intrusion
- *
- * Required Arduino libraries (install via Library Manager):
- *   - ESP8266WiFi       (bundled with ESP8266 board package)
- *   - ESP8266HTTPClient (bundled with ESP8266 board package)
- *   - ArduinoJson       (search "ArduinoJson" by Benoit Blanchon)
- *
- * Configuration: edit config.h before flashing.
+ * LED behaviour:
+ *   Solid ON   → Connected and idle
+ *   Blinking   → Intrusion alert (unified with buzzer)
  */
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include "config.h"
 
+// ── Alert state (buzzer + LED blink are one unified alert) ──────────────────
+static struct {
+  bool          active       = false;
+  unsigned long startedAt    = 0;
+  unsigned long lastBlinkAt  = 0;
+  bool          ledState     = false;
+  int           blinksLeft   = 0;
+} alert;
 
-unsigned long lastPollAt    = 0;
-unsigned long buzzerStartAt = 0;
-bool          buzzerOn      = false;
+static unsigned long lastPollAt = 0;
 
-
+// ── WiFi ─────────────────────────────────────────────────────────────────────
 void connectWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
   Serial.printf("\n[WiFi] Connecting to %s", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < WIFI_RETRY_LIMIT) {
+  for (int i = 0; i < WIFI_RETRY_LIMIT && WiFi.status() != WL_CONNECTED; i++) {
     delay(500);
     Serial.print(".");
-    attempts++;
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n[WiFi] Connected — IP: %s\n", WiFi.localIP().toString().c_str());
-    digitalWrite(LED_PIN, HIGH);
-  } else {
-    Serial.println("\n[WiFi] Failed. Will retry next cycle.");
-    digitalWrite(LED_PIN, LOW);
-  }
+  bool connected = WiFi.status() == WL_CONNECTED;
+  Serial.println(connected
+    ? "\n[WiFi] Connected — IP: " + WiFi.localIP().toString()
+    : "\n[WiFi] Failed. Will retry next cycle.");
+
+  digitalWrite(LED_PIN, connected ? HIGH : LOW);
 }
 
-
+// ── Sensor ───────────────────────────────────────────────────────────────────
 float readDistanceCm() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -61,31 +56,48 @@ float readDistanceCm() {
   return (duration == 0) ? 999.0f : (duration * 0.034f / 2.0f);
 }
 
+// ── Alert (buzzer + LED blink, non-blocking) ─────────────────────────────────
+void startAlert() {
+  if (alert.active) return;
 
-void blinkLed(int times) {
-  for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, LOW);
-    delay(80);
-    digitalWrite(LED_PIN, HIGH);
-    delay(80);
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  alert.active      = true;
+  alert.startedAt   = millis();
+  alert.lastBlinkAt = millis();
+  alert.ledState    = false;
+  alert.blinksLeft  = BLINK_COUNT * 2; // each blink = 1 LOW + 1 HIGH transition
+}
+
+void updateAlert() {
+  if (!alert.active) return;
+
+  unsigned long now = millis();
+
+  // Non-blocking LED blink
+  if (alert.blinksLeft > 0 && now - alert.lastBlinkAt >= BLINK_INTERVAL_MS) {
+    alert.ledState = !alert.ledState;
+    digitalWrite(LED_PIN, alert.ledState ? HIGH : LOW);
+    alert.lastBlinkAt = now;
+    alert.blinksLeft--;
+  }
+
+  // End alert after BUZZER_DURATION_MS
+  if (now - alert.startedAt >= BUZZER_DURATION_MS) {
+    digitalWrite(BUZZER_PIN, LOW);
+    digitalWrite(LED_PIN, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
+    alert.active = false;
   }
 }
 
-void triggerLocalAlert() {
-  if (buzzerOn) return;
-  digitalWrite(BUZZER_PIN, HIGH);
-  buzzerStartAt = millis();
-  buzzerOn      = true;
-  blinkLed(BLINK_COUNT);
-}
-
-
+// ── HTTP ─────────────────────────────────────────────────────────────────────
 void postSensorData(int motionDetected, float distanceCm) {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  WiFiClient client;
+  WiFiClientSecure client;
   HTTPClient http;
 
+  client.setInsecure();
   http.begin(client, BACKEND_URL);
   http.addHeader("Content-Type", "application/json");
 
@@ -98,16 +110,16 @@ void postSensorData(int motionDetected, float distanceCm) {
   serializeJson(doc, body);
 
   int statusCode = http.POST(body);
-  if (statusCode > 0) {
-    Serial.printf("[HTTP] POST %d\n", statusCode);
-  } else {
-    Serial.printf("[HTTP] Error: %s\n", http.errorToString(statusCode).c_str());
-  }
+  Serial.printf(statusCode > 0
+    ? "[HTTP] POST %d\n"
+    : "[HTTP] Error: %s\n",
+    statusCode > 0 ? statusCode : 0,
+    http.errorToString(statusCode).c_str());
 
   http.end();
 }
 
-
+// ── Setup / Loop ─────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
 
@@ -124,12 +136,7 @@ void setup() {
 }
 
 void loop() {
-  if (buzzerOn && millis() - buzzerStartAt >= BUZZER_DURATION_MS) {
-    digitalWrite(BUZZER_PIN, LOW);
-    buzzerOn = false;
-    // Restore solid LED to indicate still online
-    if (WiFi.status() == WL_CONNECTED) digitalWrite(LED_PIN, HIGH);
-  }
+  updateAlert(); // always tick the alert state machine
 
   if (millis() - lastPollAt < POLL_INTERVAL_MS) return;
   lastPollAt = millis();
@@ -137,15 +144,12 @@ void loop() {
   connectWifi();
 
   int   motionDetected = digitalRead(PIR_PIN);
-  float distanceCm = readDistanceCm();
+  float distanceCm     = readDistanceCm();
 
   Serial.printf("[Sensor] Motion=%d  Distance=%.1f cm\n", motionDetected, distanceCm);
 
   bool isIntrusion = (motionDetected == HIGH && distanceCm < DISTANCE_THRESHOLD);
-
-  if (isIntrusion) {
-    triggerLocalAlert();
-  }
+  if (isIntrusion) startAlert();
 
   postSensorData(motionDetected, distanceCm);
 }

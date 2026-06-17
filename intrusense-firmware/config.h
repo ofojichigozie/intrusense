@@ -1,10 +1,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define WIFI_SSID       "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD   "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID       "Wirespot"
+#define WIFI_PASSWORD   "W12345678T"
 // Set this to your deployed Render backend URL (HTTPS)
-#define BACKEND_URL     "https://your-app-name.onrender.com/api/readings"
+#define BACKEND_URL     "https://intrusense-be.onrender.com/api/readings"
 #define DEVICE_ID       "node-01"
 
 #define PIR_PIN         D5   // GPIO14

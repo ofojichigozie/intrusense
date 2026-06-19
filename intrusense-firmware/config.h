@@ -5,8 +5,9 @@
 #define WIFI_PASSWORD   "W12345678T"
 
 #define READINGS_URL    "https://intrusense-be.onrender.com/api/readings"
-#define SETTINGS_URL    "https://intrusense-be.onrender.com/api/settings"
+#define SETTINGS_URL    "https://intrusense-be.onrender.com/api/settings/firmware"
 #define DEVICE_ID       "node-01"
+#define DEVICE_API_KEY  "is_1c4f7a2e9d6b3f8c0a5e2d7b4f1c8a3e"
 
 #define PIR_PIN         D5   // GPIO14
 #define TRIG_PIN        D6   // GPIO12

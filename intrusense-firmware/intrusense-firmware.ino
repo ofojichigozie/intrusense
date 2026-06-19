@@ -79,6 +79,7 @@ void fetchSettings() {
 
   client.setInsecure();
   http.begin(client, SETTINGS_URL);
+  http.addHeader("x-api-key", DEVICE_API_KEY);
 
   int statusCode = http.GET();
 
@@ -142,6 +143,7 @@ void postSensorData(int motion, float distanceCm) {
   client.setInsecure();
   http.begin(client, READINGS_URL);
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("x-api-key", DEVICE_API_KEY);
 
   StaticJsonDocument<256> doc;
   doc["deviceId"]       = DEVICE_ID;

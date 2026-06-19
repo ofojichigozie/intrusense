@@ -64,7 +64,7 @@ On Linux or macOS, the port may look like `/dev/ttyUSB0` instead.
 ## Monitor serial output
 
 ```sh
-arduino-cli monitor -p COM3 --config baudrate=115200
+arduino-cli monitor -p COM3 --config baudrate=9600
 ```
 
 The board FQBN is optional for monitoring. If your CLI setup needs it, you can add `--fqbn esp8266:esp8266:nodemcuv2`.

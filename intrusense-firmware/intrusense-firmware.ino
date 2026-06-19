@@ -5,6 +5,11 @@
  * LED behaviour:
  *   Solid ON   → Connected and idle
  *   Blinking   → Intrusion alert (unified with buzzer)
+ *
+ * Armed state:
+ *   Polled from backend every SETTINGS_INTERVAL_MS.
+ *   Local alert only fires when armed.
+ *   Explicitly set to true when settings endpoint is unreachable (fail-safe).
  */
 
 #include <ESP8266WiFi.h>
@@ -13,18 +18,20 @@
 #include <ArduinoJson.h>
 #include "config.h"
 
-// ── Alert state (buzzer + LED blink are one unified alert) ──────────────────
+// ── Runtime state ─────────────────────────────────────────────────────────────
+static bool          armed              = true;
+static unsigned long lastReadingPollAt  = 0;
+static unsigned long lastSettingsPollAt = 0;
+
 static struct {
-  bool          active       = false;
-  unsigned long startedAt    = 0;
-  unsigned long lastBlinkAt  = 0;
-  bool          ledState     = false;
-  int           blinksLeft   = 0;
+  bool          active      = false;
+  unsigned long startedAt   = 0;
+  unsigned long lastBlinkAt = 0;
+  bool          ledState    = false;
+  int           blinksLeft  = 0;
 } alert;
 
-static unsigned long lastPollAt = 0;
-
-// ── WiFi ─────────────────────────────────────────────────────────────────────
+// ── WiFi ──────────────────────────────────────────────────────────────────────
 void connectWifi() {
   if (WiFi.status() == WL_CONNECTED) return;
 
@@ -44,7 +51,11 @@ void connectWifi() {
   digitalWrite(LED_PIN, connected ? HIGH : LOW);
 }
 
-// ── Sensor ───────────────────────────────────────────────────────────────────
+// ── Sensors ───────────────────────────────────────────────────────────────────
+int readMotion() {
+  return digitalRead(PIR_PIN);
+}
+
 float readDistanceCm() {
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
@@ -56,7 +67,40 @@ float readDistanceCm() {
   return (duration == 0) ? 999.0f : (duration * 0.034f / 2.0f);
 }
 
-// ── Alert (buzzer + LED blink, non-blocking) ─────────────────────────────────
+// ── Settings ──────────────────────────────────────────────────────────────────
+void fetchSettings() {
+  if (WiFi.status() != WL_CONNECTED) {
+    armed = true;
+    return;
+  }
+
+  WiFiClientSecure client;
+  HTTPClient http;
+
+  client.setInsecure();
+  http.begin(client, SETTINGS_URL);
+
+  int statusCode = http.GET();
+
+  if (statusCode == 200) {
+    StaticJsonDocument<256> doc;
+    DeserializationError err = deserializeJson(doc, http.getString());
+    if (!err && doc["data"]["armed"].is<bool>()) {
+      armed = doc["data"]["armed"].as<bool>();
+      Serial.printf("[Settings] armed=%s\n", armed ? "true" : "false");
+    } else {
+      armed = true;
+      Serial.println("[Settings] Parse error — defaulting to armed");
+    }
+  } else {
+    armed = true;
+    Serial.printf("[Settings] Unreachable (%d) — defaulting to armed\n", statusCode);
+  }
+
+  http.end();
+}
+
+// ── Alert (buzzer + LED blink, non-blocking) ──────────────────────────────────
 void startAlert() {
   if (alert.active) return;
 
@@ -74,7 +118,6 @@ void updateAlert() {
 
   unsigned long now = millis();
 
-  // Non-blocking LED blink
   if (alert.blinksLeft > 0 && now - alert.lastBlinkAt >= BLINK_INTERVAL_MS) {
     alert.ledState = !alert.ledState;
     digitalWrite(LED_PIN, alert.ledState ? HIGH : LOW);
@@ -82,7 +125,6 @@ void updateAlert() {
     alert.blinksLeft--;
   }
 
-  // End alert after BUZZER_DURATION_MS
   if (now - alert.startedAt >= BUZZER_DURATION_MS) {
     digitalWrite(BUZZER_PIN, LOW);
     digitalWrite(LED_PIN, WiFi.status() == WL_CONNECTED ? HIGH : LOW);
@@ -90,36 +132,36 @@ void updateAlert() {
   }
 }
 
-// ── HTTP ─────────────────────────────────────────────────────────────────────
-void postSensorData(int motionDetected, float distanceCm) {
+// ── HTTP ──────────────────────────────────────────────────────────────────────
+void postSensorData(int motion, float distanceCm) {
   if (WiFi.status() != WL_CONNECTED) return;
 
   WiFiClientSecure client;
   HTTPClient http;
 
   client.setInsecure();
-  http.begin(client, BACKEND_URL);
+  http.begin(client, READINGS_URL);
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<256> doc;
   doc["deviceId"]       = DEVICE_ID;
-  doc["motionDetected"] = motionDetected;
+  doc["motionDetected"] = motion;
   doc["distanceCm"]     = distanceCm;
 
   String body;
   serializeJson(doc, body);
 
   int statusCode = http.POST(body);
-  Serial.printf(statusCode > 0
-    ? "[HTTP] POST %d\n"
-    : "[HTTP] Error: %s\n",
-    statusCode > 0 ? statusCode : 0,
-    http.errorToString(statusCode).c_str());
+  if (statusCode > 0) {
+    Serial.printf("[HTTP] POST %d\n", statusCode);
+  } else {
+    Serial.printf("[HTTP] Error: %s\n", http.errorToString(statusCode).c_str());
+  }
 
   http.end();
 }
 
-// ── Setup / Loop ─────────────────────────────────────────────────────────────
+// ── Setup / Loop ──────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
 
@@ -133,23 +175,33 @@ void setup() {
   digitalWrite(LED_PIN,    LOW);
 
   connectWifi();
+  fetchSettings();
 }
 
 void loop() {
-  updateAlert(); // always tick the alert state machine
+  updateAlert();
 
-  if (millis() - lastPollAt < POLL_INTERVAL_MS) return;
-  lastPollAt = millis();
+  unsigned long now = millis();
 
-  connectWifi();
+  if (now - lastSettingsPollAt >= SETTINGS_INTERVAL_MS) {
+    lastSettingsPollAt = now;
+    fetchSettings();
+  }
 
-  int   motionDetected = digitalRead(PIR_PIN);
-  float distanceCm     = readDistanceCm();
+  if (now - lastReadingPollAt >= READING_INTERVAL_MS) {
+    lastReadingPollAt = now;
 
-  Serial.printf("[Sensor] Motion=%d  Distance=%.1f cm\n", motionDetected, distanceCm);
+    connectWifi();
 
-  bool isIntrusion = (motionDetected == HIGH && distanceCm < DISTANCE_THRESHOLD);
-  if (isIntrusion) startAlert();
+    int   motion     = readMotion();
+    float distanceCm = readDistanceCm();
 
-  postSensorData(motionDetected, distanceCm);
+    Serial.printf("[Sensor] Motion=%d  Distance=%.1f cm  Armed=%s\n",
+      motion, distanceCm, armed ? "true" : "false");
+
+    bool isIntrusion = (motion == HIGH && distanceCm < DISTANCE_THRESHOLD);
+    if (armed && isIntrusion) startAlert();
+
+    postSensorData(motion, distanceCm);
+  }
 }

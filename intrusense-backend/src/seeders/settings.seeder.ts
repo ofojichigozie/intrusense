@@ -2,7 +2,7 @@ import { SettingsModel } from '../models/settings.model';
 
 const DEFAULT_SETTINGS = [
   { key: 'armed', value: 'true' },
-  { key: 'distanceThresholdCm', value: '150' },
+  { key: 'distanceThresholdCm', value: '60' },
   { key: 'alertCooldownMs', value: '60000' },
 ];
 

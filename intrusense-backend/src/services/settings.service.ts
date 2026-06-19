@@ -9,7 +9,7 @@ export interface Settings {
 
 let cache: Settings = {
   armed: true,
-  distanceThresholdCm: 150,
+  distanceThresholdCm: 60,
   alertCooldownMs: 60000,
 };
 

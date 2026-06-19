@@ -12,7 +12,7 @@ export default function SettingsPage() {
   const { admin, updateProfile, updatingProfile } = useAuth();
 
   const [form, setForm] = useState<Pick<Settings, 'distanceThresholdCm' | 'alertCooldownMs'>>({
-    distanceThresholdCm: 150,
+    distanceThresholdCm: 60,
     alertCooldownMs: 60000,
   });
 

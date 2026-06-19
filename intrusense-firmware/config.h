@@ -18,7 +18,7 @@
 #define READING_INTERVAL_MS   2000UL    // sensor read + POST cadence
 #define SETTINGS_INTERVAL_MS  15000UL  // how often to re-fetch armed state
 #define BUZZER_DURATION_MS    2000UL
-#define DISTANCE_THRESHOLD    150.0f   // cm — below this + PIR = intrusion
+#define DISTANCE_THRESHOLD    60.0f   // cm — below this + PIR = intrusion
 #define BLINK_COUNT           5
 #define BLINK_INTERVAL_MS     80UL
 #define WIFI_RETRY_LIMIT      20
